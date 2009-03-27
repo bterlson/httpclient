@@ -998,6 +998,12 @@ private
       res.header['set-cookie'].each do |cookie|
         @cookie_manager.parse(cookie, req.header.request_uri)
       end
+      
+      # Set the cookie header in the current request so cookies are present in the event we have to retry the
+      # request, such as when responding to an authorization challenge.
+      if (cookie = @cookie_manager.find(req.header.request_uri)) && req.header['Cookie'].empty?
+        req.header.add('Cookie', cookie)
+      end
     end
   end
 
