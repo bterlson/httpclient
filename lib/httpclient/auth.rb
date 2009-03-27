@@ -317,12 +317,13 @@ class HTTPClient
     def calc_cred(method, uri, user, passwd, param)
       a_1 = "#{user}:#{param['realm']}:#{passwd}"
       a_2 = "#{method}:#{uri.path}"
+      cnonce = Digest::MD5.hexdigest(Time.now.to_s + rand(65535).to_s)
       @nonce_count += 1
       message_digest = []
       message_digest << Digest::MD5.hexdigest(a_1)
       message_digest << param['nonce']
       message_digest << ('%08x' % @nonce_count)
-      message_digest << param['nonce']
+      message_digest << cnonce
       message_digest << param['qop']
       message_digest << Digest::MD5.hexdigest(a_2)
       header = []
@@ -330,7 +331,7 @@ class HTTPClient
       header << "realm=\"#{param['realm']}\""
       header << "nonce=\"#{param['nonce']}\""
       header << "uri=\"#{uri.path}\""
-      header << "cnonce=\"#{param['nonce']}\""
+      header << "cnonce=\"#{cnonce}\""
       header << "nc=#{'%08x' % @nonce_count}"
       header << "qop=\"#{param['qop']}\""
       header << "response=\"#{Digest::MD5.hexdigest(message_digest.join(":"))}\""
