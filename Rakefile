@@ -3,15 +3,17 @@ require 'rake/testtask'
 require 'rake/rdoctask'
 
 task :default => :gem
-
 begin
-  require 'rake/gempackagetask'
-  load 'httpclient.gemspec'
-  Rake::GemPackageTask.new(SPEC) do |pkg|
-    pkg.need_zip = true
-    pkg.need_tar = true
+  require 'jeweler'
+  Jeweler::Tasks.new do |s|
+    s.name = "httpclient"
+    s.summary = "gives something like the functionality of libwww-perl (LWP) in Ruby"
+    s.email = "nahi@ruby-lang.org"
+    s.homepage = "http://dev.ctor.org/httpclient"
+    s.authors = ["NAKAMURA, Hiroshi", "Brian Terlson"]
   end
-rescue LoadError
+  rescue LoadError
+  puts "Jeweler not available. Install it with: sudo gem install technicalpickles-jeweler -s http://gems.github.com"
 end
 
 begin
