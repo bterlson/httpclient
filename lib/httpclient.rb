@@ -1001,7 +1001,8 @@ private
       
       # Set the cookie header in the current request so cookies are present in the event we have to retry the
       # request, such as when responding to an authorization challenge.
-      if (cookie = @cookie_manager.find(req.header.request_uri)) && req.header['Cookie'].empty?
+      if cookie = @cookie_manager.find(req.header.request_uri) then
+        req.header.delete('Cookie')
         req.header.add('Cookie', cookie)
       end
     end
