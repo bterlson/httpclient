@@ -123,7 +123,7 @@ class TestHTTPClient < Test::Unit::TestCase
     assert_equal("= Request", lines[0])
     assert_equal("! CONNECTION ESTABLISHED", lines[2])
     assert_equal("GET / HTTP/1.1", lines[3])
-    assert_equal("Host: localhost:#{Port}", lines[6])
+    assert_equal("Host: localhost:#{Port}", lines[5])
     @client.protocol_version = 'HTTP/1.1'
     assert_equal('HTTP/1.1', @client.protocol_version)
     str = ""
@@ -261,6 +261,33 @@ class TestHTTPClient < Test::Unit::TestCase
       assert(/accept/ !~ @proxyio.string)
     end
   end
+
+  def test_cookie_update_while_authentication
+    escape_noproxy do
+      @client.test_loopback_http_response << <<EOS
+HTTP/1.0 401\r
+Date: Fri, 19 Dec 2008 11:57:29 GMT\r
+Content-Type: text/plain\r
+Content-Length: 0\r
+WWW-Authenticate: Basic realm="hello"\r
+Set-Cookie: foo=bar; path=/; domain=.example.org; expires=#{Time.mktime(2030, 12, 31).httpdate}\r
+\r
+EOS
+      @client.test_loopback_http_response << <<EOS
+HTTP/1.1 200 OK\r
+Content-Length: 5\r
+Connection: close\r
+\r
+hello
+EOS
+      @client.debug_dev = str = ''
+      @client.set_auth("http://www.example.org/baz/", 'admin', 'admin')
+      assert_equal('hello', @client.get('http://www.example.org/baz/foo').content)
+      assert_match(/^Cookie: foo=bar/, str)
+      assert_match(/^Authorization: Basic YWRtaW46YWRtaW4=/, str)
+    end
+  end
+
 
   def test_proxy_ssl
     escape_noproxy do
@@ -768,6 +795,62 @@ EOS
     @client.save_cookie_store
     str = File.read(cookiefile)
     assert_match(%r(http://rubyforge.org/account/login.php	foo	bar	1924873200	rubyforge.org	/login.php	1), str)
+  end
+
+  def test_eof_error_length
+    io = StringIO.new('')
+    def io.gets(*arg)
+      @buf ||= ["HTTP/1.0 200 OK\n", "content-length: 123\n", "\n"]
+      @buf.shift
+    end
+    def io.readpartial(size, buf)
+      @second ||= false
+      if !@second
+        @second = '1st'
+        buf << "abc"
+        buf
+      elsif @second == '1st'
+        @second = '2nd'
+        raise EOFError.new
+      else
+        raise Exception.new
+      end
+    end
+    def io.eof?
+      true
+    end
+    @client.test_loopback_http_response << io
+    assert_nothing_raised do
+      @client.get('http://foo/bar')
+    end
+  end
+
+  def test_eof_error_rest
+    io = StringIO.new('')
+    def io.gets(*arg)
+      @buf ||= ["HTTP/1.0 200 OK\n", "\n"]
+      @buf.shift
+    end
+    def io.readpartial(size, buf)
+      @second ||= false
+      if !@second
+        @second = '1st'
+        buf << "abc"
+        buf
+      elsif @second == '1st'
+        @second = '2nd'
+        raise EOFError.new
+      else
+        raise Exception.new
+      end
+    end
+    def io.eof?
+      true
+    end
+    @client.test_loopback_http_response << io
+    assert_nothing_raised do
+      @client.get('http://foo/bar')
+    end
   end
 
   def test_urify

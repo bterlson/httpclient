@@ -200,7 +200,7 @@ require 'httpclient/cookie'
 #   ruby -rhttpclient -e 'p HTTPClient.head(ARGV.shift).header["last-modified"]' http://dev.ctor.org/
 #
 class HTTPClient
-  VERSION = '2.1.4.1'
+  VERSION = '2.1.5'
   RUBY_VERSION_STRING = "ruby #{RUBY_VERSION} (#{RUBY_RELEASE_DATE}) [#{RUBY_PLATFORM}]"
   /: (\S+) (\S+)/ =~ %q$Id$
   LIB_NAME = "(#{$1}/#{$2}, #{RUBY_VERSION_STRING})"
@@ -251,8 +251,13 @@ class HTTPClient
   class << self
     %w(get_content post_content head get post put delete options propfind proppatch trace).each do |name|
       eval <<-EOD
-        def #{name}(*arg)
-          new.#{name}(*arg)
+        def #{name}(*arg, &block)
+          clnt = new
+          begin
+            clnt.#{name}(*arg, &block)
+          ensure
+            clnt.reset_all
+          end
         end
       EOD
     end
@@ -588,12 +593,12 @@ class HTTPClient
   end
 
   # Sends POST request to the specified URL.  See request for arguments.
-  def post(uri, body = nil, extheader = {}, &block)
+  def post(uri, body = '', extheader = {}, &block)
     request(:post, uri, nil, body, extheader, &block)
   end
 
   # Sends PUT request to the specified URL.  See request for arguments.
-  def put(uri, body = nil, extheader = {}, &block)
+  def put(uri, body = '', extheader = {}, &block)
     request(:put, uri, nil, body, extheader, &block)
   end
 
@@ -654,14 +659,12 @@ class HTTPClient
   # cgi.rb does not support it.
   def request(method, uri, query = nil, body = nil, extheader = {}, &block)
     uri = urify(uri)
-    proxy = no_proxy?(uri) ? nil : @proxy
-    req = create_request(method, uri, query, body, extheader)
     if block
       filtered_block = proc { |res, str|
         block.call(str)
       }
     end
-    do_request(req, proxy, &filtered_block)
+    do_request(method, uri, query, body, extheader, &filtered_block)
   end
 
   # Sends HEAD request in async style.  See request_async for arguments.
@@ -724,9 +727,7 @@ class HTTPClient
   # Arguments definition is the same as request.
   def request_async(method, uri, query = nil, body = nil, extheader = {})
     uri = urify(uri)
-    proxy = no_proxy?(uri) ? nil : @proxy
-    req = create_request(method, uri, query, body, extheader)
-    do_request_async(req, proxy)
+    do_request_async(method, uri, query, body, extheader)
   end
 
   # Resets internal session for the given URL.  Keep-alive connection for the
@@ -749,11 +750,17 @@ private
   class KeepAliveDisconnected < StandardError # :nodoc:
   end
 
-  def do_request(req, proxy, &block)
+  def do_request(method, uri, query, body, extheader, &block)
     conn = Connection.new
     res = nil
+    if HTTP::Message.file?(body)
+      pos = body.pos rescue nil
+    end
     retry_count = @session_manager.protocol_retry_count
+    proxy = no_proxy?(uri) ? nil : @proxy
     while retry_count > 0
+      body.pos = pos if pos
+      req = create_request(method, uri, query, body, extheader)
       begin
         protect_keep_alive_disconnected do
           do_get_block(req, proxy, conn, &block)
@@ -768,11 +775,17 @@ private
     res
   end
 
-  def do_request_async(req, proxy)
+  def do_request_async(method, uri, query, body, extheader)
     conn = Connection.new
     t = Thread.new(conn) { |tconn|
+      if HTTP::Message.file?(body)
+        pos = body.pos rescue nil
+      end
       retry_count = @session_manager.protocol_retry_count
+      proxy = no_proxy?(uri) ? nil : @proxy
       while retry_count > 0
+        body.pos = pos if pos
+        req = create_request(method, uri, query, body, extheader)
         begin
           protect_keep_alive_disconnected do
             do_get_stream(req, proxy, tconn)
@@ -818,13 +831,11 @@ private
     retry_number = 0
     while retry_number < @follow_redirect_count
       body.pos = pos if pos
-      req = create_request(method, uri, query, body, extheader)
-      proxy = no_proxy?(req.header.request_uri) ? nil : @proxy
-      res = do_request(req, proxy, &filtered_block)
+      res = do_request(method, uri, query, body, extheader, &filtered_block)
       if HTTP::Status.successful?(res.status)
         return res
       elsif HTTP::Status.redirect?(res.status)
-        uri = urify(@redirect_uri_callback.call(req.header.request_uri, res))
+        uri = urify(@redirect_uri_callback.call(uri, res))
         retry_number += 1
       else
         raise BadResponseError.new("unexpected response: #{res.header.inspect}", res)

@@ -61,21 +61,24 @@ class HTTPClient
   # It traps HTTP response header and maintains authentication state, and
   # traps HTTP request header for inserting necessary authentication header.
   #
-  # WWWAuth has sub filters (BasicAuth, DigestAuth, and NegotiateAuth) and
-  # delegates some operations to it.
+  # WWWAuth has sub filters (BasicAuth, DigestAuth, NegotiateAuth and
+  # SSPINegotiateAuth) and delegates some operations to it.
   # NegotiateAuth requires 'ruby/ntlm' module.
+  # SSPINegotiateAuth requires 'win32/sspi' module.
   class WWWAuth < AuthFilterBase
     attr_reader :basic_auth
     attr_reader :digest_auth
     attr_reader :negotiate_auth
+    attr_reader :sspi_negotiate_auth
 
     # Creates new WWWAuth.
     def initialize
       @basic_auth = BasicAuth.new
       @digest_auth = DigestAuth.new
       @negotiate_auth = NegotiateAuth.new
+      @sspi_negotiate_auth = SSPINegotiateAuth.new
       # sort authenticators by priority
-      @authenticator = [@negotiate_auth, @digest_auth, @basic_auth]
+      @authenticator = [@negotiate_auth, @sspi_negotiate_auth, @digest_auth, @basic_auth]
     end
 
     # Resets challenge state.  See sub filters for more details.
@@ -317,11 +320,12 @@ class HTTPClient
     def calc_cred(method, uri, user, passwd, param)
       a_1 = "#{user}:#{param['realm']}:#{passwd}"
       a_2 = "#{method}:#{uri.path}"
-      cnonce = Digest::MD5.hexdigest(Time.now.to_s + rand(65535).to_s)
+      nonce = param['nonce']
+      cnonce = generate_cnonce()
       @nonce_count += 1
       message_digest = []
       message_digest << Digest::MD5.hexdigest(a_1)
-      message_digest << param['nonce']
+      message_digest << nonce
       message_digest << ('%08x' % @nonce_count)
       message_digest << cnonce
       message_digest << param['qop']
@@ -329,7 +333,7 @@ class HTTPClient
       header = []
       header << "username=\"#{user}\""
       header << "realm=\"#{param['realm']}\""
-      header << "nonce=\"#{param['nonce']}\""
+      header << "nonce=\"#{nonce}\""
       header << "uri=\"#{uri.path}\""
       header << "cnonce=\"#{cnonce}\""
       header << "nc=#{'%08x' % @nonce_count}"
@@ -338,6 +342,13 @@ class HTTPClient
       header << "algorithm=\"MD5\""
       header << "opaque=\"#{param['opaque']}\"" if param.key?('opaque')
       header.join(", ")
+    end
+
+    # cf. WEBrick::HTTPAuth::DigestAuth#generate_next_nonce(aTime)
+    def generate_cnonce
+      now = "%012d" % Time.now.to_i
+      pk = Digest::MD5.hexdigest([now, self.__id__, Process.pid, rand(65535)].join)[0, 32]
+      [now + ':' + pk].pack('m*').chop
     end
 
     def parse_challenge_param(param_str)
@@ -482,7 +493,7 @@ class HTTPClient
       case state
       when :init
         authenticator = param[:authenticator] = Win32::SSPI::NegotiateAuth.new
-        return authenticator.get_initial_token
+        return authenticator.get_initial_token(@scheme)
       when :response
         @challenge.delete(domain_uri)
         return authenticator.complete_authentication(authphrase)
